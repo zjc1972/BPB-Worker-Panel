@@ -5,8 +5,8 @@ on:
     branches:
       - main
   schedule:
-        # Runs everyday at 1:00 AM
-        - cron: "0 1 * * *"
+    # Runs everyday at 1:00 AM UTC
+    - cron: "0 1 * * *"
 
 permissions:
   contents: write
@@ -14,44 +14,77 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out the code
+      - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "latest"
+          node-version: "18"    # 稳定版本即可
 
-      - name: Install dependencies
+      - name: Install javascript-obfuscator
         run: |
           npm install -g javascript-obfuscator
 
-      - name: Clone BPB workjs
+      - name: Try download built worker (dist) or source (src)
         run: |
-          wget -O origin.js https://raw.githubusercontent.com/bia-pain-bache/BPB-Worker-Panel/refs/heads/main/build/unobfuscated-worker.js
-      
-      - name: Obfuscate BPB worker js
-        run: |
-          javascript-obfuscator origin.js --output _worker.js \
-          --compact true \
-          --control-flow-flattening true \
-          --control-flow-flattening-threshold 1 \
-          --dead-code-injection true \
-          --dead-code-injection-threshold 1 \
-          --identifier-names-generator hexadecimal \
-          --rename-globals true \
-          --string-array true \
-          --string-array-encoding 'rc4' \
-          --string-array-threshold 1 \
-          --transform-object-keys true \
-          --unicode-escape-sequence true
+          set -e
+          ORIG=""
+          # 尝试 dist/worker.js（优先）
+          URL_DIST="https://raw.githubusercontent.com/bia-pain-bache/BPB-Worker-Panel/main/dist/worker.js"
+          URL_SRC="https://raw.githubusercontent.com/bia-pain-bache/BPB-Worker-Panel/main/src/worker.js"
+          echo "Trying $URL_DIST ..."
+          if curl -fLsS "$URL_DIST" -o origin.js; then
+            echo "Downloaded from dist -> origin.js"
+            ORIG="dist"
+          else
+            echo "dist not found, trying src..."
+            if curl -fLsS "$URL_SRC" -o origin.js; then
+              echo "Downloaded from src -> origin.js"
+              ORIG="src"
+            else
+              echo "ERROR: cannot download worker source from official repo (tried dist and src)"
+              exit 1
+            fi
+          fi
+          echo "SOURCE_TYPE=${ORIG}" > .source_info
 
-      - name: Commit changes
+      - name: Obfuscate BPB worker js -> _worker.js
+        run: |
+          set -e
+          # 混淆参数可根据需要调整
+          javascript-obfuscator origin.js --output _worker.js \
+            --compact true \
+            --control-flow-flattening true \
+            --control-flow-flattening-threshold 1 \
+            --dead-code-injection true \
+            --dead-code-injection-threshold 1 \
+            --identifier-names-generator hexadecimal \
+            --rename-globals true \
+            --string-array true \
+            --string-array-encoding 'rc4' \
+            --string-array-threshold 1 \
+            --transform-object-keys true \
+            --unicode-escape-sequence true
+          echo "_worker.js generated."
+
+      - name: Show generated file info
+        run: |
+          ls -l origin.js _worker.js || true
+          echo "---- head of origin.js ----"
+          head -n 5 origin.js || true
+          echo "---- head of _worker.js ----"
+          head -n 5 _worker.js || true
+
+      - name: Commit obfuscated file back to repo
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           branch: main
-          commit_message: ':arrow_up: update latest bpb panel'
+          commit_message: ':arrow_up: update latest bpb panel worker (_worker.js)'
           commit_author: 'github-actions[bot] <github-actions[bot]@users.noreply.github.com>'
-          push_options: '--set-upstream'
+          file_pattern: |
+            _worker.js
+            origin.js

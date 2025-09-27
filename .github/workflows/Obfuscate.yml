@@ -5,7 +5,7 @@ on:
     branches:
       - main
   schedule:
-    # 每天 1 点运行
+    # 每天 01:00 UTC 运行一次
     - cron: "0 1 * * *"
 
 permissions:
@@ -16,46 +16,64 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 检出代码
       - name: Check out the code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
-      # 2. 安装 Node.js
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "latest"
+          node-version: "18"
 
-      # 3. 安装 Obfuscator
-      - name: Install dependencies
+      - name: Install javascript-obfuscator
         run: |
           npm install -g javascript-obfuscator
 
-      # 4. 下载最新 BPB 源代码
-      - name: Download latest BPB worker
+      - name: Try download built worker (dist) or source (src)
         run: |
-          wget -O origin.js https://raw.githubusercontent.com/bia-pain-bache/BPB-Worker-Panel/main/build/unobfuscated-worker.js || true
+          set -e
+          URL_DIST="https://raw.githubusercontent.com/bia-pain-bache/BPB-Worker-Panel/main/dist/worker.js"
+          URL_SRC="https://raw.githubusercontent.com/bia-pain-bache/BPB-Worker-Panel/main/src/worker.js"
+          echo "Try download from dist: $URL_DIST"
+          if curl -fLsS "$URL_DIST" -o origin.js; then
+            echo "Downloaded origin.js from dist"
+            echo "SOURCE=dist" > .source_info
+          else
+            echo "dist not found, try src: $URL_SRC"
+            if curl -fLsS "$URL_SRC" -o origin.js; then
+              echo "Downloaded origin.js from src"
+              echo "SOURCE=src" > .source_info
+            else
+              echo "ERROR: cannot download worker source from official repo (tried dist and src)"
+              exit 1
+            fi
+          fi
+          ls -l origin.js
+          head -n 3 origin.js || true
 
-      # 5. 混淆 Obfuscate
-      - name: Obfuscate BPB worker js
+      - name: Obfuscate BPB worker js -> _worker.js
         run: |
+          set -e
           javascript-obfuscator origin.js --output _worker.js \
-          --compact true \
-          --control-flow-flattening true \
-          --control-flow-flattening-threshold 1 \
-          --dead-code-injection true \
-          --dead-code-injection-threshold 1 \
-          --identifier-names-generator hexadecimal \
-          --rename-globals true \
-          --string-array true \
-          --string-array-encoding 'rc4' \
-          --string-array-threshold 1 \
-          --transform-object-keys true \
-          --unicode-escape-sequence true
+            --compact true \
+            --control-flow-flattening true \
+            --control-flow-flattening-threshold 1 \
+            --dead-code-injection true \
+            --dead-code-injection-threshold 1 \
+            --identifier-names-generator hexadecimal \
+            --rename-globals true \
+            --string-array true \
+            --string-array-encoding 'rc4' \
+            --string-array-threshold 1 \
+            --transform-object-keys true \
+            --unicode-escape-sequence true
+          echo "_worker.js generated."
+          ls -l _worker.js
+          head -n 3 _worker.js || true
 
-      # 6. 上传 _worker.js 和 origin.js 作为 artifact
       - name: Upload obfuscated worker as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: bpb-worker
           path: |
